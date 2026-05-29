@@ -1,0 +1,76 @@
+name: thea-comms
+
+# Fv26-installed workflow for Thea's commsSendWhatsApp / commsSendSMS.
+# Triggered via POST /repos/:owner/:repo/actions/workflows/thea-comms.yml/dispatches
+# Thea sends inputs: { channel: 'whatsapp'|'sms', to_number: '+447...', message: '...' }
+# Uses existing repo secrets: TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM_WA
+# Optional for SMS: TWILIO_FROM_SMS (if you want SMS as well as WhatsApp)
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'whatsapp or sms'
+        required: true
+        type: choice
+        options:
+          - whatsapp
+          - sms
+      to_number:
+        description: 'Destination phone E.164 (e.g. +447...). WhatsApp prefix added automatically.'
+        required: true
+        type: string
+      message:
+        description: 'Message body (<= 1600 chars)'
+        required: true
+        type: string
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send via Twilio
+        env:
+          TWILIO_SID: ${{ secrets.TWILIO_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_TOKEN }}
+          TWILIO_FROM_WA: ${{ secrets.TWILIO_FROM_WA }}
+          TWILIO_FROM_SMS: ${{ secrets.TWILIO_FROM_SMS }}
+          CHANNEL: ${{ github.event.inputs.channel }}
+          TO_NUMBER: ${{ github.event.inputs.to_number }}
+          MESSAGE: ${{ github.event.inputs.message }}
+        run: |
+          set -e
+          if [ -z "$TWILIO_SID" ] || [ -z "$TWILIO_TOKEN" ]; then
+            echo "Missing TWILIO_SID or TWILIO_TOKEN secret"; exit 1
+          fi
+          if [ "$CHANNEL" = "whatsapp" ]; then
+            if [ -z "$TWILIO_FROM_WA" ]; then
+              echo "Missing TWILIO_FROM_WA secret (expected like whatsapp:+14155238886)"; exit 1
+            fi
+            FROM_HEADER="$TWILIO_FROM_WA"
+            case "$TO_NUMBER" in
+              whatsapp:*) TO_HEADER="$TO_NUMBER" ;;
+              *) TO_HEADER="whatsapp:$TO_NUMBER" ;;
+            esac
+          else
+            if [ -z "$TWILIO_FROM_SMS" ]; then
+              echo "Missing TWILIO_FROM_SMS secret (required for SMS, optional for WhatsApp-only setups)"; exit 1
+            fi
+            FROM_HEADER="$TWILIO_FROM_SMS"
+            TO_HEADER="$TO_NUMBER"
+          fi
+          echo "Sending $CHANNEL to $TO_HEADER from $FROM_HEADER"
+          HTTP_CODE=$(curl -sS -o /tmp/twilio-response.json -w "%{http_code}" -X POST \
+            "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_SID/Messages.json" \
+            -u "$TWILIO_SID:$TWILIO_TOKEN" \
+            --data-urlencode "From=$FROM_HEADER" \
+            --data-urlencode "To=$TO_HEADER" \
+            --data-urlencode "Body=$MESSAGE")
+          echo "Twilio HTTP $HTTP_CODE"
+          cat /tmp/twilio-response.json
+          echo ""
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Twilio rejected the send"; exit 1
+          fi
+          echo "Sent successfully"
