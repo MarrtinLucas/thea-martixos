@@ -1,0 +1,24 @@
+name: Thea Intelligence Engine
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+jobs:
+  ie-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm install
+        working-directory: .github/scripts
+      - name: Run IE cycle
+        run: node ie-cycle.js
+        working-directory: .github/scripts
+        env:
+          SUPABASE_URL: ${{ secrets.THEA_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.THEA_SUPABASE_KEY }}
+          TAVILY_KEY: ${{ secrets.THEA_TAVILY_KEY }}
